@@ -1,0 +1,16 @@
+[package]
+name = "cpp-inline-includes"
+version = "0.1.0"
+authors = ["David Stangl <david.stangl@student.hpi.de>"]
+edition = "2021"
+rust-version = "1.56"
+resolver = "2"
+
+[dependencies]
+structopt = "0.3.25"
+anyhow = "1.0.44"
+
+[dependencies.regex]
+version = "1.5.4"
+default-features = false
+features = ["std", "perf", "unicode-bool"]
