@@ -1,12 +1,13 @@
 use anyhow::{Context, Result};
-use regex::Regex;
+use regex::{Captures, Regex};
 use std::{
+    borrow::Cow,
     collections::{hash_map::Entry, HashMap},
     error::Error,
     fmt::{self, Display, Formatter},
     fs::File,
     io::{self, BufRead, BufReader, BufWriter, Write},
-    iter,
+    iter, mem,
     path::{Path, PathBuf},
 };
 use structopt::StructOpt;
@@ -17,10 +18,6 @@ use structopt::StructOpt;
 /// include guards or #pragma once). Existing #pragma once lines are removed, as some compilers
 /// consider them a warning or even an error if encountered in a .cpp file. To detect multiple
 /// includes of the same file, the absolute path of the file with all symlinks resolved is used.
-///
-/// To make the output more readable, all leading and trailing blank lines are removed from each
-/// included file, after removing includes leading to already included files. Each included file is
-/// also surrounded by a pair of comments to identify it.
 #[derive(Debug, StructOpt)]
 struct Opts {
     /// Source file to process
@@ -30,17 +27,26 @@ struct Opts {
     directories: Vec<PathBuf>,
 
     /// Output file to write to (default: stdout)
-    #[structopt(short, long)]
+    #[structopt(short, long, value_name = "file")]
     output: Option<PathBuf>,
-}
 
-#[derive(Debug, Clone)]
-struct IncludedFile {
-    /// Canonical path to the file, used as its identity.
-    canonical_path: PathBuf,
+    /// Output `#line num "file"` directives for compilers/debuggers
+    #[structopt(long)]
+    line_directives: bool,
 
-    /// Relative path to include directory (if possible), used for display the file name.
-    rel_display_path: PathBuf,
+    /// Trim leading and trailing blank lines from each included file
+    #[structopt(long)]
+    trim_blank: bool,
+
+    /// Comment added at the beginning of each included file. Each occurrence of {relative} and
+    /// {absolute} will be replaced by the relative and absolute path to the file respectively.
+    #[structopt(long, value_name = "template")]
+    file_begin_comment: Option<String>,
+
+    /// Comment added at the end of each included file. Uses the same template syntax as
+    /// --file-begin-comment.
+    #[structopt(long, value_name = "template")]
+    file_end_comment: Option<String>,
 }
 
 #[derive(Debug)]
@@ -48,34 +54,28 @@ struct CyclicIncludeError {
     cycle: Vec<PathBuf>,
 }
 
+impl Error for CyclicIncludeError {}
+
 impl Display for CyclicIncludeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "cyclic include detected")
     }
 }
 
-impl Error for CyclicIncludeError {}
-
-#[derive(Copy, Clone, Debug)]
-enum ProcessingState {
-    InStack(usize),
-    Done,
+fn static_regex(pattern: &str) -> Regex {
+    Regex::new(pattern).expect("invalid hardcoded regex")
 }
 
-#[derive(Debug)]
-struct State {
-    processed_files: HashMap<PathBuf, ProcessingState>,
-    stack: Vec<IncludedFile>,
-    include_directories: Vec<PathBuf>,
-    include_regex: Regex,
-    pragma_once_regex: Regex,
+fn try_canonicalize(path: &Path) -> Result<PathBuf> {
+    path.canonicalize()
+        .with_context(|| format!("failed to canonicalize path \"{}\"", path.display()))
 }
 
 fn find_included_file(
     include_path: &str,
     current_dir: &Path,
     include_directories: &[PathBuf],
-) -> Result<IncludedFile> {
+) -> Result<(PathBuf, PathBuf)> {
     iter::once(current_dir)
         .chain(include_directories.iter().map(PathBuf::as_path))
         .map(|include_dir| {
@@ -85,7 +85,7 @@ fn find_included_file(
             }
 
             let canonical_path = try_canonicalize(&potential_file)?;
-            let rel_display_path = if include_dir == current_dir {
+            let display_path = if include_dir == current_dir {
                 // While the include path is relative, the file is most likely still contained in one of
                 // the include directories (the same that contained the file that included this one).
                 // Try to find its path relative to that include directory as a better display path.
@@ -100,139 +100,245 @@ fn find_included_file(
                 PathBuf::from(include_path)
             };
 
-            Ok(Some(IncludedFile {
-                canonical_path,
-                rel_display_path,
-            }))
+            Ok(Some((canonical_path, display_path)))
         })
         .find_map(Result::transpose)
         .with_context(|| format!("included file \"{}\" not found", include_path))?
 }
 
-fn process_file(file_path: &Path, writer: &mut impl Write, state: &mut State) -> Result<()> {
-    let directory = file_path.parent().context("invalid file name")?;
-    let mut reader = BufReader::new(File::open(file_path)?);
-    let mut locs = state.include_regex.capture_locations();
-    let mut line = String::new();
-    let mut before_first_line = true;
-    let mut previous_blank_lines = 0;
+#[derive(Copy, Clone, Debug)]
+enum ProcessingState {
+    InStack(usize),
+    Done,
+}
 
-    while reader.read_line(&mut line)? != 0 {
-        let trimmed_line = line.trim_end();
-        if trimmed_line.is_empty() {
-            previous_blank_lines += 1;
-            line.clear();
-            continue;
-        }
-        if state.pragma_once_regex.is_match(trimmed_line) {
-            line.clear();
-            continue;
-        }
+#[derive(Debug, Clone)]
+struct FileState {
+    /// Canonical path to the file, used as its identity.
+    canonical_path: PathBuf,
 
-        if !before_first_line {
-            for _ in 0..previous_blank_lines {
-                writeln!(writer)?;
+    /// Relative path to include directory (if possible), used for display the file name.
+    display_path: PathBuf,
+
+    /// Has anything from this file been written to the output?
+    has_written: bool,
+}
+
+#[derive(Debug)]
+struct Processor<W> {
+    writer: W,
+    opts: Opts,
+    include_regex: Regex,
+    pragma_once_regex: Regex,
+    template_placeholder_regex: Regex,
+    known_files: HashMap<PathBuf, ProcessingState>,
+    stack: Vec<FileState>,
+    current_file: FileState,
+    next_line: (usize, usize), // Pair of (index in stack, 1-based line index)
+}
+
+impl<W: Write> Processor<W> {
+    fn new(writer: W, mut opts: Opts) -> Result<Self> {
+        for include_dir in &mut opts.directories {
+            *include_dir = try_canonicalize(include_dir)?;
+        }
+        let current_file = FileState {
+            canonical_path: try_canonicalize(&opts.file)?,
+            display_path: opts.file.clone(),
+            has_written: false,
+        };
+        Ok(Self {
+            writer,
+            opts,
+            include_regex: static_regex(r#"^\s*#\s*include\s*"([^"]+)"\s*$"#),
+            pragma_once_regex: static_regex(r#"^\s*#\s*pragma\s+once\s*$"#),
+            template_placeholder_regex: static_regex(r#"\{(relative|absolute)\}"#),
+            known_files: HashMap::from_iter([(
+                current_file.canonical_path.clone(),
+                ProcessingState::InStack(0),
+            )]),
+            stack: Vec::new(),
+            current_file,
+            next_line: (0, 1),
+        })
+    }
+
+    fn expand_comment_template<'a>(&self, template: &'a str) -> Cow<'a, str> {
+        self.template_placeholder_regex
+            .replace_all(template, |captures: &Captures| {
+                let path = if &captures[0] == "{relative}" {
+                    &self.current_file.display_path
+                } else {
+                    &self.current_file.canonical_path
+                };
+                path.display().to_string()
+            })
+    }
+
+    fn emit_line(&mut self, line: &str, line_num: usize) -> Result<()> {
+        if !self.current_file.has_written && !self.stack.is_empty() {
+            if let Some(template) = &self.opts.file_begin_comment {
+                let comment = self.expand_comment_template(template);
+                writeln!(self.writer, "{}", comment)?;
             }
         }
-        previous_blank_lines = 0;
 
-        let maybe_match = state.include_regex.captures_read(&mut locs, trimmed_line);
-        match maybe_match {
-            None => {
-                write!(writer, "{}", line)?;
-                before_first_line = false;
+        let file_idx = self.stack.len();
+        if self.next_line != (file_idx, line_num) && self.opts.line_directives {
+            writeln!(
+                self.writer,
+                "#line {} \"{}\"",
+                line_num,
+                self.current_file.canonical_path.display()
+            )?;
+        }
+        self.next_line = (file_idx, line_num + 1);
+
+        write!(self.writer, "{}", line)?;
+        self.current_file.has_written = true;
+
+        Ok(())
+    }
+
+    fn emit_blank_lines(&mut self, lines: &mut Vec<(String, usize)>) -> Result<()> {
+        for (line, line_num) in lines.drain(..) {
+            self.emit_line(&line, line_num)?;
+        }
+
+        Ok(())
+    }
+
+    fn process(&mut self) -> Result<()> {
+        let current_dir = self
+            .current_file
+            .canonical_path
+            .parent()
+            .context("processed file has no parent directory")?
+            .to_path_buf();
+
+        let mut reader = BufReader::new(
+            File::open(&self.current_file.canonical_path).with_context(|| {
+                format!(
+                    "failed to open included file \"{}\"",
+                    self.current_file.display_path.display()
+                )
+            })?,
+        );
+        let mut try_read_line = move |this: &mut Self, line: &mut String| {
+            line.clear();
+            reader.read_line(line).with_context(|| {
+                format!(
+                    "failed to read from included file \"{}\"",
+                    this.current_file.display_path.display()
+                )
+            })
+        };
+
+        let mut line = String::new();
+        let mut line_num = 0;
+        let mut deferred_blank_lines = Vec::new();
+        let mut match_locs = self.include_regex.capture_locations();
+
+        while try_read_line(self, &mut line)? != 0 {
+            line_num += 1;
+            let trimmed_line = line.trim_end();
+            if trimmed_line.is_empty() && self.opts.trim_blank {
+                deferred_blank_lines.push((mem::take(&mut line), line_num));
+                continue;
             }
-            Some(_) => {
-                let (idx_l, idx_r) = locs.get(1).context("invalid hardcoded regex")?;
-                let path = &trimmed_line[idx_l..idx_r];
-                let included_file =
-                    find_included_file(path, directory, &state.include_directories)?;
 
-                match state
-                    .processed_files
-                    .entry(included_file.canonical_path.clone())
-                {
-                    Entry::Occupied(occupied_entry) => {
-                        if let ProcessingState::InStack(idx) = *occupied_entry.get() {
-                            let cycle = state.stack[idx..]
+            if self.pragma_once_regex.is_match(trimmed_line) {
+                continue;
+            }
+
+            let maybe_match = self
+                .include_regex
+                .captures_read(&mut match_locs, trimmed_line);
+            if maybe_match.is_some() {
+                let (path_start, path_end) = match_locs.get(1).expect("invalid hardcoded regex");
+                let path = &trimmed_line[path_start..path_end];
+                let (canonical_path, display_path) =
+                    find_included_file(path, &current_dir, &self.opts.directories)?;
+
+                match self.known_files.entry(canonical_path.clone()) {
+                    Entry::Occupied(entry) => {
+                        if let ProcessingState::InStack(idx) = *entry.get() {
+                            let cycle = self.stack[idx..]
                                 .iter()
-                                .map(|file| file.rel_display_path.clone())
+                                .chain(iter::once(&self.current_file))
+                                .map(|file| file.display_path.clone())
                                 .collect();
                             return Err(CyclicIncludeError { cycle }.into());
                         }
                     }
-                    Entry::Vacant(vacant_entry) => {
-                        vacant_entry.insert(ProcessingState::InStack(state.stack.len()));
-                        state.stack.push(included_file.clone());
+                    Entry::Vacant(entry) => {
+                        entry.insert(ProcessingState::InStack(self.stack.len()));
+                        if !self.opts.trim_blank || self.current_file.has_written {
+                            self.emit_blank_lines(&mut deferred_blank_lines)?;
+                        }
 
-                        let path_display = included_file.rel_display_path.display();
-                        writeln!(writer, "// begin \"{}\"", path_display)?;
-                        process_file(&included_file.canonical_path, writer, state)?;
-                        writeln!(writer, "// end \"{}\"", path_display)?;
-                        before_first_line = false;
+                        let new_state = FileState {
+                            canonical_path,
+                            display_path,
+                            has_written: false,
+                        };
+                        self.stack
+                            .push(mem::replace(&mut self.current_file, new_state));
+                        self.process()?;
 
-                        state.stack.pop();
-                        state
-                            .processed_files
-                            .insert(included_file.canonical_path, ProcessingState::Done);
+                        let sub_state = mem::replace(
+                            &mut self.current_file,
+                            self.stack.pop().expect("empty processed file stack"),
+                        );
+                        if sub_state.has_written {
+                            deferred_blank_lines.clear();
+                        }
+                        self.known_files
+                            .insert(sub_state.canonical_path, ProcessingState::Done);
                     }
                 }
+            } else {
+                if self.opts.trim_blank && !self.current_file.has_written {
+                    deferred_blank_lines.clear();
+                } else {
+                    self.emit_blank_lines(&mut deferred_blank_lines)?;
+                }
+
+                self.emit_line(&line, line_num)?;
             }
         }
 
-        line.clear();
+        if !self.opts.trim_blank {
+            self.emit_blank_lines(&mut deferred_blank_lines)?;
+        }
+
+        if self.current_file.has_written && !self.stack.is_empty() {
+            if let Some(template) = &self.opts.file_end_comment {
+                let comment = self.expand_comment_template(template);
+                writeln!(self.writer, "{}", comment)?;
+            }
+        }
+
+        Ok(())
     }
+}
 
+fn process_file(writer: impl Write, opts: Opts) -> Result<()> {
+    let mut processor = Processor::new(writer, opts)?;
+    processor.process()?;
     Ok(())
-}
-
-fn try_canonicalize(path: &Path) -> Result<PathBuf> {
-    path.canonicalize()
-        .with_context(|| format!("failed to canonicalize path: {}", path.display()))
-}
-
-fn static_regex(pattern: &str) -> Result<Regex> {
-    Regex::new(pattern).context("invalid hardcoded regex")
 }
 
 fn fallible_main() -> Result<()> {
-    let mut opts = Opts::from_args();
-    for include_dir in opts.directories.iter_mut() {
-        *include_dir = try_canonicalize(include_dir)?;
-    }
-
-    let include_regex = static_regex(r#"^\s*#\s*include\s*"([^"]+)"\s*$"#)?;
-    let pragma_once_regex = static_regex(r#"^\s*#\s*pragma\s+once\s*$"#)?;
-
-    // include main file in include stack to be able to detect cyclic include leading back to it
-    let main_file = IncludedFile {
-        canonical_path: try_canonicalize(&opts.file)?,
-        rel_display_path: opts.file.clone(),
-    };
-    let processed_files = [(
-        main_file.canonical_path.clone(),
-        ProcessingState::InStack(0),
-    )]
-    .into_iter()
-    .collect();
-    let mut state = State {
-        processed_files,
-        stack: vec![main_file],
-        include_directories: opts.directories,
-        include_regex,
-        pragma_once_regex,
-    };
-
-    if let Some(output_path) = opts.output {
-        let mut writer = BufWriter::new(File::create(output_path)?);
-        process_file(&opts.file, &mut writer, &mut state)?;
+    let opts = Opts::from_args();
+    if let Some(ref output_path) = opts.output {
+        let writer = BufWriter::new(File::create(output_path)?);
+        process_file(writer, opts)
     } else {
         let stdout = io::stdout();
-        let mut stdout_locked = stdout.lock();
-        process_file(&opts.file, &mut stdout_locked, &mut state)?;
+        let stdout_locked = stdout.lock();
+        process_file(stdout_locked, opts)
     }
-
-    Ok(())
 }
 
 fn main() {
@@ -244,7 +350,7 @@ fn main() {
                     println!("    {}", file.display());
                 }
             }
-            Err(error) => println!("Error: {}", error),
+            Err(error) => println!("Error: {:#}", error),
         }
     }
 }
