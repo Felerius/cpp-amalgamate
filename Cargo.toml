@@ -1,5 +1,5 @@
 [package]
-name = "cpp-inline-includes"
+name = "cpp-amalgamate"
 version = "0.1.0"
 authors = ["David Stangl <david.stangl@student.hpi.de>"]
 edition = "2021"
@@ -7,10 +7,14 @@ rust-version = "1.56"
 resolver = "2"
 
 [dependencies]
-structopt = "0.3.25"
 anyhow = "1.0.44"
+bstr = "0.2.17"
+globset = "0.4.8"
+itertools = "0.10.1"
+log = { version = "0.4.14", features = ["std"] }
+regex = "1.5.4"
+structopt = "0.3.25"
+termcolor = "1.1.2"
 
-[dependencies.regex]
-version = "1.5.4"
-default-features = false
-features = ["std", "perf", "unicode-bool"]
+[dev-dependencies]
+tempfile = "3.2.0"
