@@ -1,6 +1,8 @@
 /// Simple stderr logger, with level filter and color controllable by cli arguments.
 use std::{
+    ffi::OsStr,
     io::{self, Write},
+    path::Path,
     str::FromStr,
 };
 
@@ -8,49 +10,23 @@ use anyhow::{Error, Result};
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, StandardStreamLock, WriteColor};
 
+pub fn debug_file_name(path: &Path) -> &OsStr {
+    let default = OsStr::new("<no file name?>");
+    path.file_name().unwrap_or(default)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ErrorLevel {
+pub enum ErrorHandling {
     Error,
     Warn,
     Ignore,
 }
 
-#[macro_export]
-macro_rules! error_level_enabled {
-    ($error_level:expr) => {{
-        match $error_level {
-            $crate::logger::ErrorLevel::Warn => ::log::log_enabled!(::log::Level::Warn),
-            $crate::logger::ErrorLevel::Error => true,
-            $crate::logger::ErrorLevel::Ignore => ::log::log_enabled!(::log::Level::Debug),
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! error_level_log {
-    ($error_level:expr, $fmt:expr, $($arg:tt)*) => {{
-        match $error_level {
-            $crate::logger::ErrorLevel::Error => {
-                // Let the error bubble up to main where it will be logged/printed
-                ::anyhow::Result::Err(::anyhow::anyhow!($fmt, $($arg)*))
-            }
-            $crate::logger::ErrorLevel::Warn => {
-                ::log::warn!($fmt, $($arg)*);
-                ::anyhow::Result::Ok(())
-            }
-            $crate::logger::ErrorLevel::Ignore => {
-                ::log::debug!(concat!("Ignoring: ", $fmt), $($arg)*);
-                ::anyhow::Result::Ok(())
-            }
-        }
-    }};
-}
-
-impl ErrorLevel {
+impl ErrorHandling {
     pub const NAMES: [&'static str; 3] = ["error", "warn", "ignore"];
 }
 
-impl FromStr for ErrorLevel {
+impl FromStr for ErrorHandling {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -58,13 +34,26 @@ impl FromStr for ErrorLevel {
             "error" => Self::Error,
             "warn" => Self::Warn,
             "ignore" => Self::Ignore,
-            _ => anyhow::bail!("invalid error level: \"{}\"", s),
+            _ => anyhow::bail!("Invalid error level: \"{}\"", s),
         })
     }
 }
 
-struct Logger {
-    writer: StandardStream,
+#[macro_export]
+macro_rules! error_handling_handle {
+    ($handling:expr, $fmt:expr, $($arg:tt)*) => {{
+        match $handling {
+            $crate::logging::ErrorHandling::Error => Err(::anyhow::format_err!($fmt, $($arg)*)),
+            $crate::logging::ErrorHandling::Warn => {
+                ::log::warn!($fmt, $($arg)*);
+                Ok(())
+            }
+            $crate::logging::ErrorHandling::Ignore => {
+                ::log::debug!("Ignoring: {}", ::std::format_args!($fmt, $($arg)*));
+                Ok(())
+            }
+        }
+    }}
 }
 
 fn write_record(writer: &mut StandardStreamLock<'_>, record: &Record<'_>) -> io::Result<()> {
@@ -81,8 +70,12 @@ fn write_record(writer: &mut StandardStreamLock<'_>, record: &Record<'_>) -> io:
             .set_bold(record.level() == Level::Error),
     )?;
     write!(writer, "[{}]", record.level().as_str())?;
-    writer.set_color(&ColorSpec::new())?;
+    writer.reset()?;
     writeln!(writer, " {}", record.args())
+}
+
+struct Logger {
+    writer: StandardStream,
 }
 
 impl Log for Logger {

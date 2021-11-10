@@ -2,7 +2,6 @@
 use std::{
     collections::{hash_map::Entry, HashMap},
     error,
-    ffi::OsStr,
     fmt::{self, Debug, Display, Formatter},
     fs::File,
     io::{BufRead, BufReader, Write},
@@ -12,15 +11,13 @@ use std::{
 use anyhow::{Context, Result};
 use regex::{CaptureLocations, Regex};
 
-use crate::{error_level_enabled, error_level_log, resolve::IncludeResolver, ErrorLevel};
+use crate::{
+    error_handling_handle, filter::InliningFilter, logging::debug_file_name,
+    resolve::IncludeResolver, ErrorHandling,
+};
 
 fn static_regex(re: &'static str) -> Regex {
     Regex::new(re).expect("invalid hardcoded regex")
-}
-
-fn debug_filename(path: &Path) -> &OsStr {
-    path.file_name()
-        .unwrap_or_else(|| "<no file name?>".as_ref())
 }
 
 const EMPTY_STACK_IDX: usize = usize::MAX;
@@ -32,7 +29,7 @@ pub struct CyclicIncludeError {
 
 impl Display for CyclicIncludeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        writeln!(f, "cyclic include detected:")?;
+        writeln!(f, "Cyclic include detected:")?;
         for file in &self.cycle {
             writeln!(f, "\t{}", file.display())?;
         }
@@ -53,11 +50,13 @@ struct FileState {
 pub struct Processor<W> {
     writer: W,
     resolver: IncludeResolver,
+    inlining_filter: InliningFilter,
     files: Vec<FileState>,
     known_files: HashMap<PathBuf, usize>,
     tail_idx: usize,
-    on_cyclic_include: ErrorLevel,
-    on_missing_include: ErrorLevel,
+    cyclic_include_handling: ErrorHandling,
+    unresolvable_quote_include_handling: ErrorHandling,
+    unresolvable_system_include_handling: ErrorHandling,
     include_regex: Regex,
     include_regex_locs: CaptureLocations,
     pragma_once_regex: Regex,
@@ -67,26 +66,30 @@ impl<W: Write> Processor<W> {
     pub fn new(
         writer: W,
         resolver: IncludeResolver,
-        on_missing_include: ErrorLevel,
-        on_cyclic_include: ErrorLevel,
+        inlining_filter: InliningFilter,
+        cyclic_include_handling: ErrorHandling,
+        unresolvable_quote_include_handling: ErrorHandling,
+        unresolvable_system_include_handling: ErrorHandling,
     ) -> Self {
         let include_regex = static_regex(r#"^\s*#\s*include\s*(["<][^>"]+[">])\s*$"#);
         let include_regex_locs = include_regex.capture_locations();
         Self {
             writer,
             resolver,
+            inlining_filter,
             files: Vec::new(),
             known_files: HashMap::new(),
             tail_idx: EMPTY_STACK_IDX,
-            on_cyclic_include,
-            on_missing_include,
+            cyclic_include_handling,
+            unresolvable_quote_include_handling,
+            unresolvable_system_include_handling,
             include_regex,
             include_regex_locs,
             pragma_once_regex: static_regex(r"^\s*#\s*pragma\s+once\s*$"),
         }
     }
 
-    fn check_should_process(&mut self, canonical_path: PathBuf) -> Result<bool> {
+    fn assign_index(&mut self, canonical_path: PathBuf) -> Result<Option<usize>> {
         match self.known_files.entry(canonical_path) {
             Entry::Vacant(entry) => {
                 let idx = self.files.len();
@@ -95,9 +98,9 @@ impl<W: Write> Processor<W> {
                     included_by: self.tail_idx,
                     in_stack: true,
                 });
-                log::info!("Processing new file {:?}", debug_filename(entry.key()));
+                log::info!("Processing new file {:?}", debug_file_name(entry.key()));
                 entry.insert(idx);
-                Ok(true)
+                Ok(Some(idx))
             }
             Entry::Occupied(entry) => {
                 let idx = *entry.get();
@@ -107,28 +110,26 @@ impl<W: Write> Processor<W> {
                         "cannot get include cycles with only one file on the stack"
                     );
 
-                    if error_level_enabled!(self.on_cyclic_include) {
-                        let mut cycle = vec![self.files[self.tail_idx].canonical_path.clone()];
-                        let mut cycle_tail_idx = self.tail_idx;
-                        while cycle_tail_idx != idx {
-                            cycle_tail_idx = self.files[cycle_tail_idx].included_by;
-                            cycle.push(self.files[cycle_tail_idx].canonical_path.clone());
-                        }
-
-                        error_level_log!(
-                            self.on_cyclic_include,
-                            "{}",
-                            CyclicIncludeError { cycle }
-                        )?;
+                    let mut cycle = vec![self.files[self.tail_idx].canonical_path.clone()];
+                    let mut cycle_tail_idx = self.tail_idx;
+                    while cycle_tail_idx != idx {
+                        cycle_tail_idx = self.files[cycle_tail_idx].included_by;
+                        cycle.push(self.files[cycle_tail_idx].canonical_path.clone());
                     }
+
+                    error_handling_handle!(
+                        self.cyclic_include_handling,
+                        "{}",
+                        CyclicIncludeError { cycle }
+                    )?;
                 } else {
                     log::debug!(
                         "Skipping {:?}, already included",
-                        debug_filename(entry.key())
+                        debug_file_name(entry.key())
                     );
                 }
 
-                Ok(false)
+                Ok(None)
             }
         }
     }
@@ -149,11 +150,22 @@ impl<W: Write> Processor<W> {
             log::debug!("Found weird include-like statement: {}", include_ref);
             return Ok(());
         };
+        let is_system = include_ref.starts_with('<');
 
         if let Some(resolved_path) = maybe_resolved_path {
-            self.process_recursively(resolved_path)?;
+            if self
+                .inlining_filter
+                .should_inline(&resolved_path, is_system)
+            {
+                self.process_recursively(resolved_path)?;
+            }
         } else {
-            error_level_log!(self.on_missing_include, "could not resolve {}", include_ref)?;
+            let handling = if is_system {
+                self.unresolvable_system_include_handling
+            } else {
+                self.unresolvable_quote_include_handling
+            };
+            error_handling_handle!(handling, "Could not resolve {}", include_ref)?;
         }
 
         Ok(())
@@ -199,15 +211,17 @@ impl<W: Write> Processor<W> {
     }
 
     fn process_recursively(&mut self, canonical_path: PathBuf) -> Result<()> {
-        if !self.check_should_process(canonical_path)? {
+        if let Some(idx) = self.assign_index(canonical_path)? {
+            self.tail_idx = idx;
+        } else {
             return Ok(());
-        }
-
+        };
         let path = &self.files[self.tail_idx].canonical_path;
         let current_dir = path
             .parent()
             .context("Processed file has no parent directory")?
             .to_path_buf();
+
         let mut reader = File::open(path)
             .with_context(|| format!("Failed to open file \"{}\"", path.display()))
             .map(BufReader::new)?;
@@ -222,7 +236,7 @@ impl<W: Write> Processor<W> {
     }
 
     pub fn process(&mut self, source_file: &Path) -> Result<()> {
-        log::info!("Processing source file {:?}", debug_filename(source_file));
+        log::info!("Processing source file {:?}", debug_file_name(source_file));
         let canonical_path = source_file.canonicalize().with_context(|| {
             format!(
                 "Failed to canonicalize source file path \"{}\"",

@@ -8,12 +8,11 @@ resolver = "2"
 
 [dependencies]
 anyhow = "1.0.44"
-bstr = "0.2.17"
+clap = { version = "3.0.0-beta.5", features = ["wrap_help"] }
 globset = "0.4.8"
 itertools = "0.10.1"
 log = { version = "0.4.14", features = ["std"] }
 regex = "1.5.4"
-structopt = "0.3.25"
 termcolor = "1.1.2"
 
 [dev-dependencies]

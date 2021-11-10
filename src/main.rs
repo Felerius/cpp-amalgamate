@@ -35,7 +35,8 @@
 #![cfg_attr(test, allow(clippy::type_complexity))]
 
 mod cli;
-mod logger;
+mod filter;
+mod logging;
 mod process;
 mod resolve;
 
@@ -47,14 +48,25 @@ use std::{
 
 use anyhow::{Context, Result};
 
-use crate::{cli::Opts, logger::ErrorLevel, process::Processor, resolve::IncludeResolver};
+use crate::{
+    cli::Opts, filter::InliningFilter, logging::ErrorHandling, process::Processor,
+    resolve::IncludeResolver,
+};
 
 fn run_with_writer(opts: &Opts, writer: impl Write) -> Result<()> {
     let resolver = IncludeResolver::new(
         opts.quote_search_dirs().map(PathBuf::from).collect(),
         opts.system_search_dirs().map(PathBuf::from).collect(),
     )?;
-    let mut processor = Processor::new(writer, resolver, opts.missing_include, opts.cyclic_include);
+    let filter = InliningFilter::new(opts.quote_globs().cloned(), opts.system_globs().cloned())?;
+    let mut processor = Processor::new(
+        writer,
+        resolver,
+        filter,
+        opts.cyclic_include,
+        opts.unresolvable_quote_include_handling(),
+        opts.unresolvable_system_include_handling(),
+    );
     opts.files
         .iter()
         .try_for_each(|source_file| processor.process(source_file))
@@ -62,7 +74,7 @@ fn run_with_writer(opts: &Opts, writer: impl Write) -> Result<()> {
 
 fn try_main() -> Result<()> {
     let opts = Opts::parse();
-    logger::setup(opts.log, opts.color);
+    logging::setup(opts.log, opts.color);
     if let Some(out_file) = &opts.output {
         log::info!("Writing to {:?}", out_file);
         let writer = BufWriter::new(File::create(out_file).context("Failed to open output file")?);
