@@ -135,7 +135,7 @@ impl<W: Write> Processor<W> {
         }
     }
 
-    fn process_include(&mut self, include_ref: &str, current_dir: &Path) -> Result<()> {
+    fn process_include(&mut self, include_ref: &str, current_dir: &Path) -> Result<bool> {
         assert!(
             include_ref.len() >= 3,
             "error in hardcoded include regex: include ref too short"
@@ -149,7 +149,7 @@ impl<W: Write> Processor<W> {
                 .resolve_system(&include_ref[1..(include_ref.len() - 1)])?
         } else {
             debug!("Found weird include-like statement: {}", include_ref);
-            return Ok(());
+            return Ok(false);
         };
         let is_system = include_ref.starts_with('<');
 
@@ -159,6 +159,7 @@ impl<W: Write> Processor<W> {
                 .should_inline(&resolved_path, is_system)
             {
                 self.process_recursively(resolved_path)?;
+                return Ok(true);
             }
         } else {
             let handling = if is_system {
@@ -169,7 +170,7 @@ impl<W: Write> Processor<W> {
             error_handling_handle!(handling, "Could not resolve {}", include_ref)?;
         }
 
-        Ok(())
+        Ok(false)
     }
 
     fn process_line(
@@ -198,16 +199,17 @@ impl<W: Write> Processor<W> {
         let maybe_match = self
             .include_regex
             .captures_read(&mut self.include_regex_locs, line);
-        if maybe_match.is_none() {
-            write!(self.writer, "{}", line).context("Failed writing to output")?;
-            return Ok(true);
+        if maybe_match.is_some() {
+            let (ref_start, ref_end) = self
+                .include_regex_locs
+                .get(1)
+                .expect("invalid hardcoded regex: missing capture group");
+            if self.process_include(&line[ref_start..ref_end], current_dir)? {
+                return Ok(true);
+            }
         }
 
-        let (ref_start, ref_end) = self
-            .include_regex_locs
-            .get(1)
-            .expect("invalid hardcoded regex: missing capture group");
-        self.process_include(&line[ref_start..ref_end], current_dir)?;
+        write!(self.writer, "{}", line).context("Failed writing to output")?;
         Ok(true)
     }
 
