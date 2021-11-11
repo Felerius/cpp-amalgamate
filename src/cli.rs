@@ -157,6 +157,13 @@ pub struct Opts {
     /// Report only errors (-q) or nothing (-qq)
     #[clap(short, long, parse(from_occurrences), conflicts_with = "verbose")]
     quiet: i8,
+
+    /// Add #line directives.
+    ///
+    /// These allow compilers and debuggers to resolve lines in the amalgamated file to their
+    /// original files.
+    #[clap(long)]
+    pub line_directives: bool,
 }
 
 fn with_indices<'a, T>(

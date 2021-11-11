@@ -44,7 +44,40 @@ impl error::Error for CyclicIncludeError {}
 struct FileState {
     canonical_path: PathBuf,
     included_by: usize,
+    line_num: usize,
     in_stack: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LineRef {
+    file_idx: usize,
+    num: usize,
+}
+
+#[derive(Debug)]
+pub struct ErrorHandlingOpts {
+    pub cyclic_include: ErrorHandling,
+    pub unresolvable_quote_include: ErrorHandling,
+    pub unresolvable_system_include: ErrorHandling,
+}
+
+#[derive(Debug)]
+struct Regexes {
+    include: Regex,
+    include_locs: CaptureLocations,
+    pragma_once: Regex,
+}
+
+impl Regexes {
+    fn new() -> Self {
+        let include = static_regex(r#"^\s*#\s*include\s*(["<][^>"]+[">])\s*$"#);
+        let include_locs = include.capture_locations();
+        Self {
+            include,
+            include_locs,
+            pragma_once: static_regex(r"^\s*#\s*pragma\s+once\s*$"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -55,25 +88,23 @@ pub struct Processor<W> {
     files: Vec<FileState>,
     known_files: HashMap<PathBuf, usize>,
     tail_idx: usize,
-    cyclic_include_handling: ErrorHandling,
-    unresolvable_quote_include_handling: ErrorHandling,
-    unresolvable_system_include_handling: ErrorHandling,
-    include_regex: Regex,
-    include_regex_locs: CaptureLocations,
-    pragma_once_regex: Regex,
+    expected_line: Option<LineRef>,
+    error_handling_opts: ErrorHandlingOpts,
+    regexes: Regexes,
 }
 
 impl<W: Write> Processor<W> {
     pub fn new(
         writer: W,
         resolver: IncludeResolver,
+        line_directives: bool,
         inlining_filter: InliningFilter,
-        cyclic_include_handling: ErrorHandling,
-        unresolvable_quote_include_handling: ErrorHandling,
-        unresolvable_system_include_handling: ErrorHandling,
+        error_handling_opts: ErrorHandlingOpts,
     ) -> Self {
-        let include_regex = static_regex(r#"^\s*#\s*include\s*(["<][^>"]+[">])\s*$"#);
-        let include_regex_locs = include_regex.capture_locations();
+        let expected_line = line_directives.then(|| LineRef {
+            file_idx: EMPTY_STACK_IDX,
+            num: 0,
+        });
         Self {
             writer,
             resolver,
@@ -81,12 +112,9 @@ impl<W: Write> Processor<W> {
             files: Vec::new(),
             known_files: HashMap::new(),
             tail_idx: EMPTY_STACK_IDX,
-            cyclic_include_handling,
-            unresolvable_quote_include_handling,
-            unresolvable_system_include_handling,
-            include_regex,
-            include_regex_locs,
-            pragma_once_regex: static_regex(r"^\s*#\s*pragma\s+once\s*$"),
+            expected_line,
+            error_handling_opts,
+            regexes: Regexes::new(),
         }
     }
 
@@ -97,6 +125,7 @@ impl<W: Write> Processor<W> {
                 self.files.push(FileState {
                     canonical_path: entry.key().clone(),
                     included_by: self.tail_idx,
+                    line_num: 0,
                     in_stack: true,
                 });
                 info!("Processing {:?}", debug_file_name(entry.key()));
@@ -119,7 +148,7 @@ impl<W: Write> Processor<W> {
                     }
 
                     error_handling_handle!(
-                        self.cyclic_include_handling,
+                        self.error_handling_opts.cyclic_include,
                         "{}",
                         CyclicIncludeError { cycle }
                     )?;
@@ -133,6 +162,29 @@ impl<W: Write> Processor<W> {
                 Ok(None)
             }
         }
+    }
+
+    fn output_copied_line(&mut self, line: &str) -> Result<()> {
+        if let Some(expected_line) = &mut self.expected_line {
+            let cur_file = &self.files[self.tail_idx];
+            let cur_line = LineRef {
+                file_idx: self.tail_idx,
+                num: cur_file.line_num,
+            };
+            if cur_line != *expected_line {
+                writeln!(
+                    self.writer,
+                    "#line {} \"{}\"",
+                    cur_line.num,
+                    cur_file.canonical_path.display()
+                )?;
+                *expected_line = cur_line;
+            }
+            expected_line.num += 1;
+        }
+
+        write!(self.writer, "{}", line)?;
+        Ok(())
     }
 
     fn process_include(&mut self, include_ref: &str, current_dir: &Path) -> Result<bool> {
@@ -163,9 +215,9 @@ impl<W: Write> Processor<W> {
             }
         } else {
             let handling = if is_system {
-                self.unresolvable_system_include_handling
+                self.error_handling_opts.unresolvable_system_include
             } else {
-                self.unresolvable_quote_include_handling
+                self.error_handling_opts.unresolvable_quote_include
             };
             error_handling_handle!(handling, "Could not resolve {}", include_ref)?;
         }
@@ -191,17 +243,20 @@ impl<W: Write> Processor<W> {
             return Ok(false);
         }
 
-        if self.pragma_once_regex.is_match(line) {
+        self.files[self.tail_idx].line_num += 1;
+        if self.regexes.pragma_once.is_match(line) {
             trace!("Skipping pragma once");
             return Ok(true);
         }
 
         let maybe_match = self
-            .include_regex
-            .captures_read(&mut self.include_regex_locs, line);
+            .regexes
+            .include
+            .captures_read(&mut self.regexes.include_locs, line);
         if maybe_match.is_some() {
             let (ref_start, ref_end) = self
-                .include_regex_locs
+                .regexes
+                .include_locs
                 .get(1)
                 .expect("invalid hardcoded regex: missing capture group");
             if self.process_include(&line[ref_start..ref_end], current_dir)? {
@@ -209,7 +264,8 @@ impl<W: Write> Processor<W> {
             }
         }
 
-        write!(self.writer, "{}", line).context("Failed writing to output")?;
+        self.output_copied_line(line)
+            .context("Failed writing to output")?;
         Ok(true)
     }
 

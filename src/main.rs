@@ -51,7 +51,10 @@ use anyhow::{Context, Result};
 use log::{error, info};
 
 use crate::{
-    cli::Opts, filter::InliningFilter, logging::ErrorHandling, process::Processor,
+    cli::Opts,
+    filter::InliningFilter,
+    logging::ErrorHandling,
+    process::{ErrorHandlingOpts, Processor},
     resolve::IncludeResolver,
 };
 
@@ -61,13 +64,17 @@ fn run_with_writer(opts: &Opts, writer: impl Write) -> Result<()> {
         opts.system_search_dirs().map(PathBuf::from).collect(),
     )?;
     let filter = InliningFilter::new(opts.quote_globs().cloned(), opts.system_globs().cloned())?;
+    let error_handling_opts = ErrorHandlingOpts {
+        cyclic_include: opts.cyclic_include_handling(),
+        unresolvable_quote_include: opts.unresolvable_quote_include_handling(),
+        unresolvable_system_include: opts.unresolvable_system_include_handling(),
+    };
     let mut processor = Processor::new(
         writer,
         resolver,
+        opts.line_directives,
         filter,
-        opts.cyclic_include_handling(),
-        opts.unresolvable_quote_include_handling(),
-        opts.unresolvable_system_include_handling(),
+        error_handling_opts,
     );
     opts.files
         .iter()
