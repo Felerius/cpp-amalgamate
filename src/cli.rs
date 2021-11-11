@@ -4,22 +4,8 @@ use std::path::{Path, PathBuf};
 use clap::{AppSettings, ArgMatches, FromArgMatches, IntoApp, Parser};
 use itertools::Itertools;
 use log::LevelFilter;
-use termcolor::ColorChoice;
 
 use crate::{filter::InvertibleGlob, logging::ErrorHandling};
-
-const LOG_LEVEL_NAMES: [&str; 6] = ["off", "error", "warn", "info", "debug", "trace"];
-const COLOR_OPTIONS: [&str; 3] = ["always", "auto", "never"];
-const CLAP_SETTINGS: AppSettings = AppSettings::HidePossibleValuesInHelp;
-
-fn parse_color_option(value: &str) -> ColorChoice {
-    match value {
-        "always" => ColorChoice::Always,
-        "auto" => ColorChoice::Auto,
-        "never" => ColorChoice::Never,
-        _ => unreachable!("clap did not filter out invalid --color value"),
-    }
-}
 
 /// cpp-amalgamate combines one or more C++ source files and recursively inlines included headers.
 /// It tracks which headers have been included and skips any further includes of them. Which
@@ -27,11 +13,16 @@ fn parse_color_option(value: &str) -> ColorChoice {
 ///
 /// Use -h for short descriptions of the available options or --help for more details.
 #[derive(Debug, Parser)]
-#[clap(author, version, setting = CLAP_SETTINGS)]
+#[clap(
+    author,
+    version,
+    // To make ArgRequiredElseHelp work, we cannot use default_value for arguments.
+    setting = AppSettings::HidePossibleValuesInHelp | AppSettings::ArgRequiredElseHelp
+)]
 pub struct Opts {
     /// ArgMatches used to create this instance
     #[clap(skip)]
-    pub matches: ArgMatches,
+    matches: ArgMatches,
 
     /// Source files to process
     #[clap(required = true, parse(from_os_str))]
@@ -49,7 +40,7 @@ pub struct Opts {
         multiple_occurrences = true,
         number_of_values = 1
     )]
-    pub dir: Vec<PathBuf>,
+    dir: Vec<PathBuf>,
 
     /// Add a search directory for quote includes
     #[clap(
@@ -59,7 +50,7 @@ pub struct Opts {
         multiple_occurrences = true,
         number_of_values = 1
     )]
-    pub dir_quote: Vec<PathBuf>,
+    dir_quote: Vec<PathBuf>,
 
     /// Add a search directory for system includes
     #[clap(
@@ -69,9 +60,9 @@ pub struct Opts {
         multiple_occurrences = true,
         number_of_values = 1
     )]
-    pub dir_system: Vec<PathBuf>,
+    dir_system: Vec<PathBuf>,
 
-    /// Filter which includes are inlined
+    /// Filter which includes are inlined.
     ///
     /// By default, cpp-amalgamate inlines every header it can resolve using the given search
     /// directories. With this option, headers can be excluded from being inlined. By prefixing the
@@ -85,9 +76,9 @@ pub struct Opts {
         multiple_occurrences = true,
         number_of_values = 1
     )]
-    pub ignore: Vec<InvertibleGlob>,
+    ignore: Vec<InvertibleGlob>,
 
-    /// Filter which quote includes are inlined
+    /// Filter which quote includes are inlined.
     ///
     /// This option works just like --ignore, except it only applies to quote includes.
     #[clap(
@@ -96,9 +87,9 @@ pub struct Opts {
         multiple_occurrences = true,
         number_of_values = 1
     )]
-    pub ignore_quote: Vec<InvertibleGlob>,
+    ignore_quote: Vec<InvertibleGlob>,
 
-    /// Filter which system includes are inlined
+    /// Filter which system includes are inlined.
     ///
     /// This option works just like --ignore, except it only applies to system includes.
     #[clap(
@@ -107,7 +98,7 @@ pub struct Opts {
         multiple_occurrences = true,
         number_of_values = 1
     )]
-    pub ignore_system: Vec<InvertibleGlob>,
+    ignore_system: Vec<InvertibleGlob>,
 
     /// How to handle an unresolvable include.
     ///
@@ -123,7 +114,7 @@ pub struct Opts {
         possible_values = &ErrorHandling::NAMES,
         conflicts_with_all = &["unresolvable-quote-include", "unresolvable-system-include"]
     )]
-    pub unresolvable_include: Option<ErrorHandling>,
+    unresolvable_include: Option<ErrorHandling>,
 
     /// How to handle an unresolvable quote include.
     ///
@@ -133,7 +124,7 @@ pub struct Opts {
         value_name = "handling",
         possible_values = &ErrorHandling::NAMES,
     )]
-    pub unresolvable_quote_include: Option<ErrorHandling>,
+    unresolvable_quote_include: Option<ErrorHandling>,
 
     /// How to handle an unresolvable system include.
     ///
@@ -143,7 +134,7 @@ pub struct Opts {
         value_name = "handling",
         possible_values = &ErrorHandling::NAMES,
     )]
-    pub unresolvable_system_include: Option<ErrorHandling>,
+    unresolvable_system_include: Option<ErrorHandling>,
 
     /// How to handle a cyclic include.
     ///
@@ -151,38 +142,21 @@ pub struct Opts {
     /// defaults to error.
     #[clap(
         long,
-        value_name = "level",
-        default_value = "error",
+        value_name = "handling",
         possible_values = &ErrorHandling::NAMES,
-        hide_default_value = true,
     )]
-    pub cyclic_include: ErrorHandling,
+    cyclic_include: Option<ErrorHandling>,
 
-    /// Control whether to print colored output
+    /// Increase the verbosity of the output (can be passed multiple times).
     ///
-    /// The available values are always, auto (the default), and never.
-    #[clap(
-        long,
-        parse(from_str = parse_color_option),
-        value_name = "when",
-        default_value = "auto",
-        possible_values = &COLOR_OPTIONS,
-        hide_default_value = true,
-    )]
-    pub color: ColorChoice,
+    /// By default, only warnings and errors are reported. Passing '-v' includes info, '-vv' debug,
+    /// and '-vvv` trace log messages.
+    #[clap(short, long, parse(from_occurrences))]
+    verbose: i8,
 
-    /// Print log messages.
-    ///
-    /// The possible values are (in order from least to most messages): off, error, warn, info,
-    /// debug, and trace. The default is off.
-    #[clap(
-        long,
-        value_name = "level",
-        default_value = "off",
-        possible_values = &LOG_LEVEL_NAMES,
-        hide_default_value = true,
-    )]
-    pub log: LevelFilter,
+    /// Report only errors (-q) or nothing (-qq)
+    #[clap(short, long, parse(from_occurrences), conflicts_with = "verbose")]
+    quiet: i8,
 }
 
 fn with_indices<'a, T>(
@@ -255,5 +229,20 @@ impl Opts {
         self.unresolvable_include
             .or(self.unresolvable_system_include)
             .unwrap_or(ErrorHandling::Ignore)
+    }
+
+    pub fn cyclic_include_handling(&self) -> ErrorHandling {
+        self.cyclic_include.unwrap_or(ErrorHandling::Error)
+    }
+
+    pub fn log_level(&self) -> LevelFilter {
+        match self.verbose - self.quiet {
+            i8::MIN..=-2 => LevelFilter::Off,
+            -1 => LevelFilter::Error,
+            0 => LevelFilter::Warn,
+            1 => LevelFilter::Info,
+            2 => LevelFilter::Debug,
+            3..=i8::MAX => LevelFilter::Trace,
+        }
     }
 }

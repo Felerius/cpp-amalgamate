@@ -3,7 +3,7 @@ use std::{path::Path, str::FromStr};
 
 use anyhow::{Error, Result};
 use globset::{Candidate, Glob, GlobSet, GlobSetBuilder};
-use log::Level;
+use log::{debug, log_enabled, Level};
 
 use crate::logging::debug_file_name;
 
@@ -57,9 +57,9 @@ fn build_set_and_infos(
         })
         .collect();
 
-    if log::log_enabled!(Level::Debug) {
+    if log_enabled!(Level::Debug) {
         let glob_strs: Vec<_> = infos.iter().map(|info| info.str.clone()).collect();
-        log::debug!("{} ignore globs: {:?}", type_name, glob_strs);
+        debug!("{} ignore globs: {:?}", type_name, glob_strs);
     }
 
     Ok((set_builder.build()?, infos))
@@ -77,14 +77,14 @@ fn check_should_inline(
     if let Some(&idx) = indices.last() {
         let glob_str = &infos[idx].str;
         if infos[idx].inverted {
-            log::debug!("Inlining {:?} (cause: '{}')", log_name, glob_str);
+            debug!("Inlining {:?} (cause: '{}')", log_name, glob_str);
             true
         } else {
-            log::debug!("Not inlining {:?} (cause: '{}')", log_name, glob_str);
+            debug!("Not inlining {:?} (cause: '{}')", log_name, glob_str);
             false
         }
     } else {
-        log::debug!("Inlining {:?} by default", log_name);
+        debug!("Inlining {:?} by default", log_name);
         true
     }
 }

@@ -41,12 +41,14 @@ mod process;
 mod resolve;
 
 use std::{
+    env,
     fs::File,
     io::{self, BufWriter, Write},
     path::PathBuf,
 };
 
 use anyhow::{Context, Result};
+use log::{error, info};
 
 use crate::{
     cli::Opts, filter::InliningFilter, logging::ErrorHandling, process::Processor,
@@ -63,7 +65,7 @@ fn run_with_writer(opts: &Opts, writer: impl Write) -> Result<()> {
         writer,
         resolver,
         filter,
-        opts.cyclic_include,
+        opts.cyclic_include_handling(),
         opts.unresolvable_quote_include_handling(),
         opts.unresolvable_system_include_handling(),
     );
@@ -74,13 +76,25 @@ fn run_with_writer(opts: &Opts, writer: impl Write) -> Result<()> {
 
 fn try_main() -> Result<()> {
     let opts = Opts::parse();
-    logging::setup(opts.log, opts.color);
+
+    let mut builder = env_logger::builder();
+    if env::var_os("RUST_LOG_VERBOSE").is_some() {
+        builder.format_timestamp_millis();
+    } else {
+        builder
+            .format_level(true)
+            .format_module_path(false)
+            .format_target(false)
+            .format_timestamp(None);
+    }
+    builder.filter_level(opts.log_level()).init();
+
     if let Some(out_file) = &opts.output {
-        log::info!("Writing to {:?}", out_file);
+        info!("Writing to {:?}", out_file);
         let writer = BufWriter::new(File::create(out_file).context("Failed to open output file")?);
         run_with_writer(&opts, writer)
     } else {
-        log::info!("Writing to terminal");
+        info!("Writing to terminal");
         let stdout = io::stdout();
         run_with_writer(&opts, stdout.lock())
     }
@@ -88,6 +102,6 @@ fn try_main() -> Result<()> {
 
 fn main() {
     if let Err(error) = try_main() {
-        log::error!("{:#}", error);
+        error!("{:#}", error);
     }
 }

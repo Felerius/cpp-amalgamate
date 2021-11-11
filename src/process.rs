@@ -9,6 +9,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use log::{debug, info, trace};
 use regex::{CaptureLocations, Regex};
 
 use crate::{
@@ -98,7 +99,7 @@ impl<W: Write> Processor<W> {
                     included_by: self.tail_idx,
                     in_stack: true,
                 });
-                log::info!("Processing new file {:?}", debug_file_name(entry.key()));
+                info!("Processing {:?}", debug_file_name(entry.key()));
                 entry.insert(idx);
                 Ok(Some(idx))
             }
@@ -123,7 +124,7 @@ impl<W: Write> Processor<W> {
                         CyclicIncludeError { cycle }
                     )?;
                 } else {
-                    log::debug!(
+                    debug!(
                         "Skipping {:?}, already included",
                         debug_file_name(entry.key())
                     );
@@ -147,7 +148,7 @@ impl<W: Write> Processor<W> {
             self.resolver
                 .resolve_system(&include_ref[1..(include_ref.len() - 1)])?
         } else {
-            log::debug!("Found weird include-like statement: {}", include_ref);
+            debug!("Found weird include-like statement: {}", include_ref);
             return Ok(());
         };
         let is_system = include_ref.starts_with('<');
@@ -190,7 +191,7 @@ impl<W: Write> Processor<W> {
         }
 
         if self.pragma_once_regex.is_match(line) {
-            log::trace!("Skipping pragma once");
+            trace!("Skipping pragma once");
             return Ok(true);
         }
 
@@ -236,7 +237,7 @@ impl<W: Write> Processor<W> {
     }
 
     pub fn process(&mut self, source_file: &Path) -> Result<()> {
-        log::info!("Processing source file {:?}", debug_file_name(source_file));
+        info!("Processing source file {:?}", debug_file_name(source_file));
         let canonical_path = source_file.canonicalize().with_context(|| {
             format!(
                 "Failed to canonicalize source file path \"{}\"",

@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use log::{debug, trace};
 
 #[derive(Debug)]
 struct IncludePrinter<'a>(&'a str, bool);
@@ -42,7 +43,7 @@ fn resolve(
         .chain(search_path.iter().map(PathBuf::as_path))
         .find_map(|include_dir| {
             let potential_path = include_dir.join(path);
-            log::trace!("Trying to resolve {} to {:?}", printer, potential_path);
+            trace!("Trying to resolve {} to {:?}", printer, potential_path);
 
             (potential_path.exists() && !potential_path.is_dir()).then(|| {
                 potential_path.canonicalize().with_context(|| {
@@ -57,9 +58,9 @@ fn resolve(
 
     let (left, right) = current_dir.map_or(('<', '>'), |_| ('"', '"'));
     if let Some(resolved) = &maybe_resolved {
-        log::debug!("Resolved {}{}{} to {:?}", left, path, right, resolved);
+        debug!("Resolved {}{}{} to {:?}", left, path, right, resolved);
     } else {
-        log::debug!("Failed to resolve {}{}{}", left, path, right);
+        debug!("Failed to resolve {}{}{}", left, path, right);
     }
 
     Ok(maybe_resolved)
@@ -78,8 +79,8 @@ impl IncludeResolver {
             }
         }
 
-        log::debug!("Quote search dirs: {:#?}", quote_search_dirs);
-        log::debug!("System search dirs: {:#?}", system_search_dirs);
+        debug!("Quote search dirs: {:#?}", quote_search_dirs);
+        debug!("System search dirs: {:#?}", system_search_dirs);
         Ok(Self {
             quote_search_paths: quote_search_dirs,
             system_search_paths: system_search_dirs,
