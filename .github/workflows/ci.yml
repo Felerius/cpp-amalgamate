@@ -2,7 +2,29 @@ on: push
 name: ci
 
 jobs:
-  ci:
+  fmt:
+    name: Source formatting check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt
+
+      - name: Check formatting
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: -- --check
+
+  check:
+    name: Compilation check
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -11,7 +33,6 @@ jobs:
           - beta
           - nightly
           - 1.56.0
-
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -22,21 +43,48 @@ jobs:
           profile: minimal
           toolchain: ${{ matrix.rust }}
           override: true
-          components: rustfmt, clippy
 
-      - name: Build
+      - name: Check compilation
         uses: actions-rs/cargo@v1
         with:
-          command: build
+          command: check
 
-      - name: Rustfmt
-        uses: actions-rs/cargo@v1
+  clippy:
+    name: Lint check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
         with:
-          command: fmt
-          args: --all -- --check
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: clippy
 
-      - name: Clippy
+      - name: Check lints
         uses: actions-rs/cargo@v1
         with:
           command: clippy
           args: -- -D warnings
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Run tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
