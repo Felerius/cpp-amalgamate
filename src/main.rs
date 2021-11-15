@@ -32,7 +32,6 @@
     clippy::verbose_file_reads,
 )]
 #![allow(clippy::module_name_repetitions, clippy::non_ascii_literal)]
-#![cfg_attr(test, allow(clippy::type_complexity))]
 
 mod cli;
 mod filter;
@@ -63,7 +62,10 @@ fn run_with_writer(opts: &Opts, writer: impl Write) -> Result<()> {
         opts.quote_search_dirs().map(PathBuf::from).collect(),
         opts.system_search_dirs().map(PathBuf::from).collect(),
     )?;
-    let filter = InliningFilter::new(opts.quote_globs().cloned(), opts.system_globs().cloned())?;
+    let filter = InliningFilter::new(
+        opts.quote_filter_globs().cloned(),
+        opts.system_filter_globs().cloned(),
+    )?;
     let error_handling_opts = ErrorHandlingOpts {
         cyclic_include: opts.cyclic_include_handling(),
         unresolvable_quote_include: opts.unresolvable_quote_include_handling(),
@@ -110,5 +112,6 @@ fn try_main() -> Result<()> {
 fn main() {
     if let Err(error) = try_main() {
         error!("{:#}", error);
+        std::process::exit(1);
     }
 }

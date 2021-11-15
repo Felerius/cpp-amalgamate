@@ -80,6 +80,13 @@ impl Regexes {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum IncludeHandling {
+    Inline,
+    Remove,
+    Leave,
+}
+
 #[derive(Debug)]
 pub struct Processor<W> {
     writer: W,
@@ -118,7 +125,7 @@ impl<W: Write> Processor<W> {
         }
     }
 
-    fn assign_index(&mut self, canonical_path: PathBuf) -> Result<Option<usize>> {
+    fn push_to_stack(&mut self, canonical_path: PathBuf) -> Result<IncludeHandling> {
         match self.known_files.entry(canonical_path) {
             Entry::Vacant(entry) => {
                 let idx = self.files.len();
@@ -130,7 +137,8 @@ impl<W: Write> Processor<W> {
                 });
                 info!("Processing {:?}", debug_file_name(entry.key()));
                 entry.insert(idx);
-                Ok(Some(idx))
+                self.tail_idx = idx;
+                Ok(IncludeHandling::Inline)
             }
             Entry::Occupied(entry) => {
                 let idx = *entry.get();
@@ -152,14 +160,14 @@ impl<W: Write> Processor<W> {
                         "{}",
                         CyclicIncludeError { cycle }
                     )?;
+                    Ok(IncludeHandling::Leave)
                 } else {
                     debug!(
                         "Skipping {:?}, already included",
                         debug_file_name(entry.key())
                     );
+                    Ok(IncludeHandling::Remove)
                 }
-
-                Ok(None)
             }
         }
     }
@@ -187,6 +195,7 @@ impl<W: Write> Processor<W> {
         Ok(())
     }
 
+    /// Returns `true` if the include statement should be kept, `false` if it shouldn't.
     fn process_include(&mut self, include_ref: &str, current_dir: &Path) -> Result<bool> {
         assert!(
             include_ref.len() >= 3,
@@ -201,7 +210,7 @@ impl<W: Write> Processor<W> {
                 .resolve_system(&include_ref[1..(include_ref.len() - 1)])?
         } else {
             debug!("Found weird include-like statement: {}", include_ref);
-            return Ok(false);
+            return Ok(true);
         };
         let is_system = include_ref.starts_with('<');
 
@@ -210,8 +219,14 @@ impl<W: Write> Processor<W> {
                 .inlining_filter
                 .should_inline(&resolved_path, is_system)
             {
-                self.process_recursively(resolved_path)?;
-                return Ok(true);
+                return Ok(match self.push_to_stack(resolved_path)? {
+                    IncludeHandling::Inline => {
+                        self.process_recursively()?;
+                        false
+                    }
+                    IncludeHandling::Remove => false,
+                    IncludeHandling::Leave => true,
+                });
             }
         } else {
             let handling = if is_system {
@@ -222,9 +237,10 @@ impl<W: Write> Processor<W> {
             error_handling_handle!(handling, "Could not resolve {}", include_ref)?;
         }
 
-        Ok(false)
+        Ok(true)
     }
 
+    /// Returns `true` when a line was processed, `false` if at eof.
     fn process_line(
         &mut self,
         mut reader: impl BufRead,
@@ -259,7 +275,7 @@ impl<W: Write> Processor<W> {
                 .include_locs
                 .get(1)
                 .expect("invalid hardcoded regex: missing capture group");
-            if self.process_include(&line[ref_start..ref_end], current_dir)? {
+            if !self.process_include(&line[ref_start..ref_end], current_dir)? {
                 return Ok(true);
             }
         }
@@ -269,12 +285,7 @@ impl<W: Write> Processor<W> {
         Ok(true)
     }
 
-    fn process_recursively(&mut self, canonical_path: PathBuf) -> Result<()> {
-        if let Some(idx) = self.assign_index(canonical_path)? {
-            self.tail_idx = idx;
-        } else {
-            return Ok(());
-        };
+    fn process_recursively(&mut self) -> Result<()> {
         let path = &self.files[self.tail_idx].canonical_path;
         let current_dir = path
             .parent()
@@ -304,7 +315,9 @@ impl<W: Write> Processor<W> {
         })?;
 
         assert_eq!(self.tail_idx, EMPTY_STACK_IDX);
-        self.process_recursively(canonical_path)?;
+        if self.push_to_stack(canonical_path)? == IncludeHandling::Inline {
+            self.process_recursively()?;
+        }
         assert_eq!(self.tail_idx, EMPTY_STACK_IDX);
 
         Ok(())

@@ -68,8 +68,12 @@ pub struct Opts {
     /// By default, cpp-amalgamate inlines every header it can resolve using the given search
     /// directories. With this option, headers can be excluded from being inlined. By prefixing the
     /// glob with '!', previously excluded files can be selectively added again. The globs given to
-    /// this and --ignore-quote/--ignore-system are evaluated in order, with the latest matching
+    /// this and --filter-quote/--filter-system are evaluated in order, with the latest matching
     /// glob taking precedence.
+    ///
+    /// Globs are matched on the full path of the included file, with all symlinks resolved. A '**'
+    /// can be used to match any number of directories, for example '**/a.hpp',
+    /// '/usr/local/include/**', or even '/usr/**/*.hpp'.
     #[clap(
         short,
         long,
@@ -77,29 +81,29 @@ pub struct Opts {
         multiple_occurrences = true,
         number_of_values = 1
     )]
-    ignore: Vec<InvertibleGlob>,
+    filter: Vec<InvertibleGlob>,
 
     /// Filter which quote includes are inlined.
     ///
-    /// This option works just like --ignore, except it only applies to quote includes.
+    /// This option works just like --filter, except it only applies to quote includes.
     #[clap(
         long,
         value_name = "glob",
         multiple_occurrences = true,
         number_of_values = 1
     )]
-    ignore_quote: Vec<InvertibleGlob>,
+    filter_quote: Vec<InvertibleGlob>,
 
     /// Filter which system includes are inlined.
     ///
-    /// This option works just like --ignore, except it only applies to system includes.
+    /// This option works just like --filter, except it only applies to system includes.
     #[clap(
         long,
         value_name = "glob",
         multiple_occurrences = true,
         number_of_values = 1
     )]
-    ignore_system: Vec<InvertibleGlob>,
+    filter_system: Vec<InvertibleGlob>,
 
     /// How to handle an unresolvable include.
     ///
@@ -213,18 +217,18 @@ impl Opts {
             .map(PathBuf::as_path)
     }
 
-    /// Returns a list of all ignore globs for quote includes in the order given on the cli.
+    /// Returns a list of all filter globs for quote includes in the order given on the cli.
     ///
-    /// This is a merged list of the --ignore and --ignore-quote options.
-    pub fn quote_globs(&self) -> impl Iterator<Item = &InvertibleGlob> {
-        self.merge_by_cli_order(&self.ignore, "ignore", &self.ignore_quote, "ignore-quote")
+    /// This is a merged list of the --filter and --filter-quote options.
+    pub fn quote_filter_globs(&self) -> impl Iterator<Item = &InvertibleGlob> {
+        self.merge_by_cli_order(&self.filter, "filter", &self.filter_quote, "filter-quote")
     }
 
-    /// Returns a list of all ignore globs for system includes in the order given on the cli.
+    /// Returns a list of all filter globs for system includes in the order given on the cli.
     ///
-    /// This is a merged list of the --ignore and --ignore-system options.
-    pub fn system_globs(&self) -> impl Iterator<Item = &InvertibleGlob> {
-        self.merge_by_cli_order(&self.ignore, "ignore", &self.ignore_system, "ignore-system")
+    /// This is a merged list of the --filter and --filter-system options.
+    pub fn system_filter_globs(&self) -> impl Iterator<Item = &InvertibleGlob> {
+        self.merge_by_cli_order(&self.filter, "filter", &self.filter_system, "filter-system")
     }
 
     pub fn unresolvable_quote_include_handling(&self) -> ErrorHandling {
