@@ -1,7 +1,17 @@
 [package]
 name = "cpp-amalgamate"
 version = "0.1.0"
-authors = ["David Stangl <david.stangl@student.hpi.de>"]
+authors = ["David Stangl <david@david-stangl.com>"]
+description = """
+cpp-amalgamate recursively combines C++ source files and the headers they
+include into a single output file. It tracks which headers have been included
+and skips any further references to them. Which includes are inlined and which
+are left as is can be precisely controlled.
+"""
+repository = "https://github.com/Felerius/cpp-amalgamate"
+keywords = ["c++", "cpp", "amalgamation", "competitive-programming"]
+categories = ["command-line-utilities", "development-tools"]
+license = "MIT"
 edition = "2021"
 rust-version = "1.56"
 resolver = "2"

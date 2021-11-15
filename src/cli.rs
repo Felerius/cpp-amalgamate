@@ -7,15 +7,16 @@ use log::LevelFilter;
 
 use crate::{filter::InvertibleGlob, logging::ErrorHandling};
 
-/// cpp-amalgamate combines one or more C++ source files and recursively inlines included headers.
-/// It tracks which headers have been included and skips any further includes of them. Which
-/// includes are inlined and which are left intact can be controlled with various options.
-///
-/// Use -h for short descriptions of the available options or --help for more details.
+const ABOUT: &str = concat!(
+    clap::crate_description!(),
+    "\nUse -h for short descriptions of the available options or --help for more details.\n"
+);
+
 #[derive(Debug, Parser)]
 #[clap(
     author,
     version,
+    about=ABOUT,
     // To make ArgRequiredElseHelp work, we cannot use default_value for arguments.
     setting = AppSettings::HidePossibleValuesInHelp | AppSettings::ArgRequiredElseHelp
 )]
