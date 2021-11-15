@@ -1,36 +1,80 @@
-# cpp-inline-includes
+<div align="center">
+
+# cpp-amalgamate
 
 [![Build status](https://github.com/Felerius/cpp-inline-includes/actions/workflows/ci.yml/badge.svg)](https://github.com/Felerius/cpp-inline-includes/actions)
 
-Small utility to recursively inline all non-system includes (i.e. `#include "..."` but not
-`#include <...>`) in a C++ file. It was created to combine submissions for online competitive
-programming judges such as [Codeforces](https://codeforces.com) or [AtCoder](atcoder.jp) into a
-single file, but might be useful in other contexts as well.
+</div>
 
-To avoid reimplementing a version of the C++ preprocessor, some assumptions are made that should be
-reasonable for most use cases. Firstly, all files are included at most once, as if guarded by an
-include guard or `#pragma once`. To check whether two includes point to the same file, the absolute
-path with all symlinks resolved is used. To avoid warnings/errors, all `#pragma once` lines in
-included files are removed.
+cpp-amalgamate recursively combines C++ source files and the headers they include into a single
+output file. It tracks which headers have been included and skips any further references to them.
+Which includes are inlined and which are left as is can be precisely controlled.
+
+## Features & limitations
+
+When provided with one or more source files and accompanying search directories for includes,
+cpp-amalgamate will concatenate the source files and recursively inline all include statements it
+can resolve using the given search directories (or from the current directory, for
+`#include "..."`). While by default all resolvable includes are inlined, this can be controlled
+using the `--filter*` family of options.  It can also insert corresponding `#line num "file"`
+directives which allows compilers or debuggers to resolve lines in the combined file back to their
+origin.
+
+However, cpp-amalgamate does not interpret preprocessor instructions beyond `#include`. This notably
+includes the `#if` family of instructions, such as traditional header guards. Instead,
+cpp-amalgamate assumes that every header should be included at most once, as if it was guarded by an
+include guard of `#pragma once`. It does detect `#pragma once` instructions and removes them, as
+these cause warnings or errors when compiling the combined file with some compilers.
+
+This simplified behavior also might cause problems if includes are guarded by `#if` statements. If
+the same header is referenced in two separate if statements, it will only be expanded in the former
+while the latter `#include` will be removed.
 
 ## Usage
 
-To use cpp-inline-includes, run
+The basic invocation for cpp-amalgamate is
 
 ```shell
-cpp-inline-includes main.cpp include-dir1 include-dir2
+cpp-amalgamate [options] source-files...
 ```
 
-This inlines all includes in `main.cpp`, using `include-dir1` and `include-dir2` as the include
-directories to resolve included files. The result is printed to the standard output, but can be
-redirected to a file with the `-o`/`--output` flag.
+To specify search directories, use `-d <directory>`/`--dir <directory>`. You can also use
+`--dir-quote` or `--dir-system` for search directories only used for quote (i.e., `#include "..."`)
+or system includes (i.e., `#include <...>`). Note that cpp-amalgamate does not use any search
+directories by default!
 
-To customize the output, the following options are available:
+### Filtering
 
-* `--line-directives`: This adds `#line num "file"` directives to the output. This allows compilers
-  and debuggers to print the original file name and line numbers.
-* `--trim-blank`: Trims all blank (only whitespace) lines from the beginning and end of each file.
-* `--file-begin-comment <template>`/`--file-end-comment <template>`: Comments to place before the
-  first and after the last line of each included file. The templates can contain `{absolute}` and/or
-  `{relative}`, which will be replaced with the absolute or relative (with respect to its include
-  directory) path of the included file.
+Using `-f`/`--filter`, you can specify globs for includes that should not be inlined. As with search
+directories, `--filter-quote` and `--filter-system` are versions only applicable to one type of
+include. Globs can be inverted with a leading `!`, causing matching headers to be inlined even if a
+previous glob excluded them. Globs are evaluated in order, with the last matching glob determining
+whether a header is included or not. By default (i.e., if no glob matches), all headers are inlined.
+
+Note that these globs are applied to the absolute path to the header with all symbolic links
+resolved. This means that often a `**` will be necessary. It matches any number of path entries.
+That is,
+
+* `**` matches any file,
+* `**/*.hpp` all files with the extension `.hpp`,
+* and `/usr/local/include/**` all files in `/usr/local/include`.
+
+For the full details on the supported syntax, check the
+[globset documentation](https://docs.rs/globset/0.4.8/globset/#syntax).
+
+### Miscellaneous
+
+Other flags supported by cpp-amalgamate are:
+
+* `-o <file>`/`--output <file>`: Write the combined source file to `<file>` rather than the standard
+  output.
+* `--line-directives`: Add `#line num "file"` directives to the output, allowing compilers and
+  debuggers to resolve lines to their original files.
+* `-v`/`--verbose` and `-q`/`--quiet`: Increase or decrease the level of log messages shown. By
+  default, both warnings and errors are shown.
+* `--unresolvable-include <handling>`: Specifies what is done when an include cannot be resolved.
+  Possible values are `error`, `warn`, and `ignore`, with the latter being the default. If all
+  includes should be inlined, this can be useful to assert this fact. Also available as
+  `--unresolvable-quote-include` and `--unresolvable-system-include`.
+* `--cyclic-include <handling>`: Specifies how a cyclic include is handled. Supports the same values
+  as `--unresolvable-include` except with `error` as the default.
