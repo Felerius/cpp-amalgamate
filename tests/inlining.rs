@@ -72,7 +72,7 @@ fn already_included_source_file() -> Result<()> {
 }
 
 #[test]
-fn pragma_once_by_default() -> Result<()> {
+fn include_headers_at_most_once() -> Result<()> {
     common::builder()
         .source_file(indoc! {"
             #include <a.hpp>
@@ -153,5 +153,26 @@ fn line_directives() -> Result<()> {
             src_file=src_file.display(),
             b_hpp=b_hpp.display()
         });
+    Ok(())
+}
+
+#[test]
+fn pragma_once_removal() -> Result<()> {
+    common::builder()
+        .source_file(indoc! {"
+            #include <a.hpp>
+            #include <b.hpp>
+        "})?
+        .search_dir(
+            "-d",
+            [
+                ("a.hpp", "#pragma once\n"),
+                ("b.hpp", "# \tpragma\t  once  \t\n"),
+            ],
+        )?
+        .command()
+        .assert()
+        .success()
+        .stdout("");
     Ok(())
 }
