@@ -1,4 +1,4 @@
-mod common;
+use crate::util;
 
 use anyhow::Result;
 use assert_fs::prelude::*;
@@ -7,7 +7,7 @@ use predicates::prelude::*;
 
 #[test]
 fn basic_file_resolving() -> Result<()> {
-    common::builder()
+    util::builder()
         .source_file(indoc! {r#"
             #include "a.hpp"
             // hello?
@@ -29,7 +29,7 @@ fn basic_file_resolving() -> Result<()> {
 
 #[test]
 fn quote_and_system_only_search_dirs() -> Result<()> {
-    common::builder()
+    util::builder()
         .source_file(indoc! {r#"
             #include "a.hpp"
             #include "b.hpp"
@@ -62,7 +62,7 @@ fn quote_and_system_only_search_dirs() -> Result<()> {
 
 #[test]
 fn precedence_of_search_dirs() -> Result<()> {
-    common::builder()
+    util::builder()
         .source_file("#include <a.hpp>")?
         .search_dir("-d", [("a.hpp", "// 1")])?
         .search_dir("-d", [("a.hpp", "// 2")])?
@@ -76,7 +76,7 @@ fn precedence_of_search_dirs() -> Result<()> {
 
 #[test]
 fn resolving_to_file_symlinks() -> Result<()> {
-    common::builder()
+    util::builder()
         .source_file("#include <b.hpp>")?
         .search_dir_setup("-d", |dir| {
             let a_path = dir.child("a.hpp");
@@ -94,7 +94,7 @@ fn resolving_to_file_symlinks() -> Result<()> {
 
 #[test]
 fn directories_are_not_valid_resolves() -> Result<()> {
-    common::builder()
+    util::builder()
         .source_file("#include <a>")?
         .search_dir_setup("-d", |dir| {
             dir.child("a").create_dir_all()?;
@@ -113,7 +113,7 @@ fn unresolvable_include_error_options() -> Result<()> {
     for handling in handling_options {
         for (left, right) in [('<', '>'), ('"', '"')] {
             let input = format!("#include {}a{}", left, right);
-            let mut assert = common::builder()
+            let mut assert = util::builder()
                 .source_file(&input)?
                 .command()
                 .args(["--unresolvable-include", handling])
@@ -136,7 +136,7 @@ fn unresolvable_include_error_options() -> Result<()> {
                 [('<', '>', system_handling), ('"', '"', quote_handling)]
             {
                 let input = format!("#include {}a{}", left, right);
-                let mut assert = common::builder()
+                let mut assert = util::builder()
                     .source_file(&input)?
                     .command()
                     .args([

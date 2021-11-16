@@ -1,11 +1,11 @@
-mod common;
+use crate::util;
 
 use anyhow::Result;
 use indoc::indoc;
 
 #[test]
 fn blacklist_filters() -> Result<()> {
-    common::builder()
+    util::builder()
         .source_file(indoc! {"
             #include <a.hpp>
             #include <b.hpp>
@@ -24,7 +24,7 @@ fn blacklist_filters() -> Result<()> {
 
 #[test]
 fn whilelist_filters() -> Result<()> {
-    common::builder()
+    util::builder()
         .source_file(indoc! {"
             #include <a.hpp>
             #include <b.hpp>
@@ -43,7 +43,7 @@ fn whilelist_filters() -> Result<()> {
 
 #[test]
 fn quote_and_system_only_filters() -> Result<()> {
-    common::builder()
+    util::builder()
         .source_file(indoc! {r#"
             #include <a.hpp>
             #include <b.hpp>
@@ -73,7 +73,7 @@ fn quote_and_system_only_filters() -> Result<()> {
 
 #[test]
 fn filter_precedence() -> Result<()> {
-    common::builder()
+    util::builder()
         .source_file("#include <a/b/c.hpp>")?
         .search_dir("-d", [("a/b/c.hpp", "arst")])?
         .command()

@@ -1,4 +1,4 @@
-mod common;
+use crate::util;
 
 use std::path::PathBuf;
 
@@ -10,7 +10,7 @@ use predicates::prelude::*;
 #[test]
 fn cyclic_includes() -> Result<()> {
     for handling in [None, Some("error"), Some("warn"), Some("ignore")] {
-        let builder = common::builder()
+        let builder = util::builder()
             .source_file("#include <a.hpp>")?
             .search_dir(
                 "-d",
@@ -39,7 +39,7 @@ fn cyclic_includes() -> Result<()> {
 #[test]
 fn cyclic_include_back_to_source_file() -> Result<()> {
     let mut a_path = PathBuf::new();
-    common::builder()
+    util::builder()
         .search_dir_setup("-d", |dir| {
             dir.child("a.hpp").write_str("#include <a.hpp>")?;
             dir.child("b.hpp").write_str("#include <b.hpp>")?;
@@ -56,7 +56,7 @@ fn cyclic_include_back_to_source_file() -> Result<()> {
 #[test]
 fn already_included_source_file() -> Result<()> {
     let mut include_path = PathBuf::new();
-    common::builder()
+    util::builder()
         .source_file("#include <a.hpp>")?
         .search_dir_setup("-d", |dir| {
             dir.child("a.hpp").write_str("arst")?;
@@ -73,7 +73,7 @@ fn already_included_source_file() -> Result<()> {
 
 #[test]
 fn include_headers_at_most_once() -> Result<()> {
-    common::builder()
+    util::builder()
         .source_file(indoc! {"
             #include <a.hpp>
             #include <b.hpp>
@@ -88,7 +88,7 @@ fn include_headers_at_most_once() -> Result<()> {
 
 #[test]
 fn file_identity_considers_symlinks() -> Result<()> {
-    common::builder()
+    util::builder()
         .source_file(indoc! {"
             #include <a.hpp>
             #include <b.hpp>
@@ -107,7 +107,7 @@ fn file_identity_considers_symlinks() -> Result<()> {
 
 #[test]
 fn weird_include_statements() -> Result<()> {
-    common::builder()
+    util::builder()
         .source_file("# \t include \t <a.hpp> \t ")?
         .search_dir("-d", [("a.hpp", "arst")])?
         .command()
@@ -119,7 +119,7 @@ fn weird_include_statements() -> Result<()> {
 
 #[test]
 fn line_directives() -> Result<()> {
-    let builder = common::builder()
+    let builder = util::builder()
         .source_file(indoc! {"
             arst
             #include <a.hpp>
@@ -158,7 +158,7 @@ fn line_directives() -> Result<()> {
 
 #[test]
 fn pragma_once_removal() -> Result<()> {
-    common::builder()
+    util::builder()
         .source_file(indoc! {"
             #include <a.hpp>
             #include <b.hpp>
