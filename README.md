@@ -21,9 +21,9 @@ directives which allows compilers or debuggers to resolve lines in the combined 
 origin.
 
 However, cpp-amalgamate does not interpret preprocessor instructions beyond `#include`. This notably
-includes the `#if` family of instructions, such as traditional header guards. Instead,
-cpp-amalgamate assumes that every header should be included at most once, as if it was guarded by an
-include guard of `#pragma once`. It does detect `#pragma once` instructions and removes them, as
+means that it cannot understand traditional header guards using `#if` instructions. Instead,
+cpp-amalgamate assumes that every header should be included at most once, as if it was guarded by a
+header guard or `#pragma once`. It does detect `#pragma once` instructions and removes them, as
 these cause warnings or errors when compiling the combined file with some compilers.
 
 This simplified behavior also might cause problems if includes are guarded by `#if` statements. If
@@ -51,7 +51,7 @@ include. Globs can be inverted with a leading `!`, causing matching headers to b
 previous glob excluded them. Globs are evaluated in order, with the last matching glob determining
 whether a header is included or not. By default (i.e., if no glob matches), all headers are inlined.
 
-Note that these globs are applied to the absolute path to the header with all symbolic links
+Note that these globs are applied to the absolute path of the header with all symbolic links
 resolved. This means that often a `**` will be necessary. It matches any number of path entries.
 That is,
 
@@ -71,7 +71,7 @@ Other flags supported by cpp-amalgamate are:
 * `--line-directives`: Add `#line num "file"` directives to the output, allowing compilers and
   debuggers to resolve lines to their original files.
 * `-v`/`--verbose` and `-q`/`--quiet`: Increase or decrease the level of log messages shown. By
-  default, both warnings and errors are shown.
+  default, only warnings and errors are shown.
 * `--unresolvable-include <handling>`: Specifies what is done when an include cannot be resolved.
   Possible values are `error`, `warn`, and `ignore`, with the latter being the default. If all
   includes should be inlined, this can be useful to assert this fact. Also available as
