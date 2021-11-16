@@ -11,12 +11,21 @@ const ABOUT: &str = concat!(
     clap::crate_description!(),
     "\nUse -h for short descriptions of the available options or --help for more details.\n"
 );
+const HELP_TEMPLATE: &str = "\
+{before-help}{bin} {version}\n\
+{author-with-newline}\
+{about-section}\n\
+{usage-heading}\n    {usage}\n\
+\n\
+{all-args}{after-help}\
+";
 
 #[derive(Debug, Parser)]
 #[clap(
     author,
     version,
     about=ABOUT,
+    help_template=HELP_TEMPLATE,
     // To make ArgRequiredElseHelp work, we cannot use default_value for arguments.
     setting = AppSettings::HidePossibleValuesInHelp | AppSettings::ArgRequiredElseHelp
 )]
