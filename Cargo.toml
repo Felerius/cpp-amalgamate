@@ -1,6 +1,6 @@
 [package]
 name = "cpp-amalgamate"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["David Stangl <david@david-stangl.com>"]
 description = """
 cpp-amalgamate recursively combines C++ source files and the headers they include into a single
