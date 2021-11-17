@@ -7,10 +7,10 @@ use log::LevelFilter;
 
 use crate::{filter::InvertibleGlob, logging::ErrorHandling};
 
-const ABOUT: &str = concat!(
-    clap::crate_description!(),
-    "\nUse -h for short descriptions of the available options or --help for more details.\n"
-);
+const ABOUT: &str = "cpp-amalgamate recursively combines C++ source files and the headers they
+include into a single output file. It tracks which headers have been included and skips any further
+references to them. Which includes are inlined and which are left as is can be precisely
+controlled.";
 const HELP_TEMPLATE: &str = "\
 {before-help}{bin} {version}\n\
 {author-with-newline}\

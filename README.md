@@ -81,3 +81,13 @@ Other flags supported by cpp-amalgamate are:
   `--unresolvable-system-include`.
 * `--cyclic-include`: Specifies how a cyclic include is handled. Supports the same values as
   `--unresolvable-include` except with `error` as the default.
+
+### Installation
+
+Each [GitHub release](https://github.com/Felerius/cpp-amalgamate/releases) contains precompiled
+binaries for most common operating systems/architectures. Alternatively, cpp-amalgamate can be
+installed using cargo which is bundled with Rust:
+
+```shell
+cargo install cpp-amalgamate
+```
