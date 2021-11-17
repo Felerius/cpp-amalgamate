@@ -82,7 +82,7 @@ Other flags supported by cpp-amalgamate are:
 * `--cyclic-include`: Specifies how a cyclic include is handled. Supports the same values as
   `--unresolvable-include` except with `error` as the default.
 
-### Installation
+## Installation
 
 Each [GitHub release](https://github.com/Felerius/cpp-amalgamate/releases) contains precompiled
 binaries for most common operating systems/architectures. Alternatively, cpp-amalgamate can be
