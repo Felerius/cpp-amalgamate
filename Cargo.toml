@@ -9,7 +9,7 @@ output file.
 repository = "https://github.com/Felerius/cpp-amalgamate"
 homepage = "https://github.com/Felerius/cpp-amalgamate"
 documentation = "https://github.com/Felerius/cpp-amalgamate"
-keywords = ["c++", "cpp", "amalgamation", "competitive-programming"]
+keywords = ["cpp", "amalgamation", "competitive", "programming"]
 categories = ["command-line-utilities", "development-tools"]
 license = "MIT"
 edition = "2021"
