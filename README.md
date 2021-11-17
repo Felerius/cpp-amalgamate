@@ -3,7 +3,9 @@
 # cpp-amalgamate
 
 [![Build status](https://github.com/Felerius/cpp-inline-includes/actions/workflows/ci.yml/badge.svg)](https://github.com/Felerius/cpp-inline-includes/actions)
-
+[![License](https://img.shields.io/crates/l/cpp-amalgamate)](https://github.com/Felerius/cpp-amalgamate/blob/main/LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/cpp-amalgamate)](https://crates.io/crates/cpp-amalgamate)
+  
 </div>
 
 cpp-amalgamate recursively combines C++ source files and the headers they include into a single
