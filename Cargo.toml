@@ -23,7 +23,7 @@ env_logger = "0.9.0"
 globset = "0.4.8"
 itertools = "0.10.1"
 log = { version = "0.4.14", features = ["std"] }
-regex = "1.5.4"
+regex = "1.5.5"
 
 [dev-dependencies]
 assert_cmd = "2.0.2"
