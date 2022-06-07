@@ -1,7 +1,7 @@
 //! Definition and parsing of cli arguments
 use std::path::{Path, PathBuf};
 
-use clap::{AppSettings, ArgMatches, FromArgMatches, IntoApp, Parser};
+use clap::{ArgMatches, FromArgMatches, IntoApp, Parser};
 use itertools::Itertools;
 use log::LevelFilter;
 
@@ -26,8 +26,9 @@ const HELP_TEMPLATE: &str = "\
     version,
     about=ABOUT,
     help_template=HELP_TEMPLATE,
-    // To make ArgRequiredElseHelp work, we cannot use default_value for arguments.
-    setting = AppSettings::HidePossibleValuesInHelp | AppSettings::ArgRequiredElseHelp
+    hide_possible_values=true,
+    // To make this work, we cannot use default_value for arguments.
+    arg_required_else_help=true,
 )]
 pub struct Opts {
     /// ArgMatches used to create this instance
@@ -190,8 +191,8 @@ fn with_indices<'a, T>(
 
 impl Opts {
     pub fn parse() -> Self {
-        let app = Self::into_app();
-        let matches = app.get_matches();
+        let cmd = Self::command();
+        let matches = cmd.get_matches();
         let mut opts = Self::from_arg_matches(&matches)
             .expect("from_arg_matches should never return None when derived?!");
         opts.matches = matches;
